@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/Nano PDF.png" alt="Nano PDF Logo" width="300"/>
+  <img src="https://raw.githubusercontent.com/gavrielc/Nano-PDF/main/assets/Nano%20PDF.png" alt="Nano PDF Logo" width="300"/>
 </p>
 
 # Nano PDF Editor
