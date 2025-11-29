@@ -2,10 +2,43 @@ import os
 from pathlib import Path
 from typing import List, Tuple
 import subprocess
+import shutil
 from pdf2image import convert_from_path
 from pypdf import PdfReader, PdfWriter
 import pytesseract
 from PIL import Image
+
+def check_system_dependencies():
+    """Checks if required system dependencies are installed."""
+    missing = []
+
+    # Check for pdftotext (part of poppler-utils)
+    if not shutil.which('pdftotext'):
+        missing.append('pdftotext (poppler/poppler-utils)')
+
+    # Check for tesseract
+    if not shutil.which('tesseract'):
+        missing.append('tesseract')
+
+    if missing:
+        deps_str = ", ".join(missing)
+        if os.name == 'darwin':  # macOS
+            install_cmd = "brew install poppler tesseract"
+        elif os.name == 'posix':  # Linux
+            install_cmd = "sudo apt-get install poppler-utils tesseract-ocr"
+        else:  # Windows
+            install_cmd = "choco install poppler tesseract\n(You may need to restart your terminal after installation)"
+
+        raise RuntimeError(
+            f"Missing system dependencies: {deps_str}\n\n"
+            f"Installation:\n{install_cmd}\n\n"
+            f"See https://github.com/gavrielc/Nano-PDF#readme for more details."
+        )
+
+def get_page_count(pdf_path: str) -> int:
+    """Returns the total number of pages in the PDF."""
+    reader = PdfReader(pdf_path)
+    return len(reader.pages)
 
 def extract_full_text(pdf_path: str) -> str:
     """Extracts the full text from a PDF using pdftotext (via subprocess for speed/layout)."""
@@ -44,7 +77,6 @@ def extract_full_text(pdf_path: str) -> str:
         return ""
 
 def render_page_as_image(pdf_path: str, page_number: int) -> Image.Image:
-    """Renders a specific page (1-indexed) as a PIL Image."""
     """Renders a specific page (1-indexed) as a PIL Image."""
     images = convert_from_path(
         pdf_path, 

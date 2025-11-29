@@ -3,6 +3,7 @@ from typing import List, Optional
 from pathlib import Path
 from nano_pdf import pdf_utils, ai_utils
 import concurrent.futures
+import tempfile
 
 app = typer.Typer()
 
@@ -12,12 +13,20 @@ def edit(
     edits: List[str] = typer.Argument(..., help="Pairs of 'PageNumber Prompt' (e.g. 1 'Fix typo' 2 'Make blue')"),
     style_refs: Optional[str] = typer.Option(None, help="Comma-separated list of extra reference page numbers (e.g. '5,6')"),
     use_context: bool = typer.Option(False, help="Include full PDF text as context (can confuse the model)"),
-    output: Optional[str] = typer.Option(None, help="Output path for the edited PDF. Defaults to 'edited_<filename>'")
+    output: Optional[str] = typer.Option(None, help="Output path for the edited PDF. Defaults to 'edited_<filename>'"),
+    resolution: str = typer.Option("4K", help="Image resolution: '4K', '2K', '1K' (higher = better quality but slower)")
 ):
     """
     Edit a PDF page using Nano Banana (Gemini 3 Pro Image).
     Usage: python -m src.main edit deck.pdf 1 "prompt A" 2 "prompt B"
     """
+    # Check system dependencies first
+    try:
+        pdf_utils.check_system_dependencies()
+    except RuntimeError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(code=1)
+
     input_path = Path(pdf_path)
     if not input_path.exists():
         typer.echo(f"Error: File {pdf_path} not found.")
@@ -30,16 +39,30 @@ def edit(
     if len(edits) % 2 != 0:
         typer.echo("Error: Edits must be pairs of 'PageNumber Prompt'.")
         raise typer.Exit(code=1)
-    
-    parsed_edits = []
+
+    # Merge duplicate page edits into a single prompt
+    edits_by_page = {}
     for i in range(0, len(edits), 2):
         try:
             p_num = int(edits[i])
             prompt = edits[i+1]
-            parsed_edits.append((p_num, prompt))
+            if p_num in edits_by_page:
+                # Merge prompts with separator
+                edits_by_page[p_num] += f"\n\nALSO: {prompt}"
+            else:
+                edits_by_page[p_num] = prompt
         except ValueError:
             typer.echo(f"Error: Invalid page number '{edits[i]}'")
             raise typer.Exit(code=1)
+
+    parsed_edits = list(edits_by_page.items())
+
+    # Validate page numbers are within range
+    total_pages = pdf_utils.get_page_count(str(input_path))
+    invalid_pages = [p for p, _ in parsed_edits if p < 1 or p > total_pages]
+    if invalid_pages:
+        typer.echo(f"Error: Invalid page number(s) {invalid_pages}. PDF has {total_pages} pages.")
+        raise typer.Exit(code=1)
 
     typer.echo(f"Processing {pdf_path} with {len(parsed_edits)} edits...")
     
@@ -82,11 +105,14 @@ def edit(
                 target_image=target_image,
                 style_reference_images=style_images,
                 full_text_context=full_text,
-                user_prompt=prompt_text
+                user_prompt=prompt_text,
+                resolution=resolution
             )
             
             # Re-hydrate
-            temp_pdf = f"temp_page_{page_num}.pdf"
+            temp_pdf_file = tempfile.NamedTemporaryFile(mode='wb', suffix='.pdf', delete=False)
+            temp_pdf = temp_pdf_file.name
+            temp_pdf_file.close()
             pdf_utils.rehydrate_image_to_pdf(generated_image, temp_pdf)
             
             typer.echo(f"Finished Page {page_num}")
@@ -96,16 +122,19 @@ def edit(
             return None
 
     typer.echo(f"Processing {len(parsed_edits)} pages in parallel...")
-    
+
+    completed_count = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(process_single_page, p, prompt) for p, prompt in parsed_edits]
-        
+
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
             if result:
                 p_num, temp_pdf = result
                 replacements[p_num] = temp_pdf
                 temp_files.append(temp_pdf)
+            completed_count += 1
+            typer.echo(f"Progress: {completed_count}/{len(parsed_edits)} pages completed")
 
     if not replacements:
         typer.echo("No pages were successfully processed.")

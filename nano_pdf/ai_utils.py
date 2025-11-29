@@ -17,7 +17,8 @@ def generate_edited_slide(
     target_image: Image.Image,
     style_reference_images: List[Image.Image],
     full_text_context: str,
-    user_prompt: str
+    user_prompt: str,
+    resolution: str = "4K"
 ) -> Image.Image:
     """
     Sends the target image, style refs, and text context to Gemini 3 Pro Image.
@@ -40,16 +41,35 @@ def generate_edited_slide(
         prompt_parts.append(f"CONTEXT:\n{full_text_context}\n")
 
     # Call the model
-    response = client.models.generate_content(
-        model='gemini-3-pro-image-preview', 
-        contents=prompt_parts,
-        config=types.GenerateContentConfig(
-            response_modalities=['IMAGE'], 
-            image_config=types.ImageConfig(
-                image_size="4K"
+    try:
+        response = client.models.generate_content(
+            model='gemini-3-pro-image-preview',
+            contents=prompt_parts,
+            config=types.GenerateContentConfig(
+                response_modalities=['IMAGE'],
+                image_config=types.ImageConfig(
+                    image_size=resolution
+                )
             )
         )
-    )
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "quota" in error_msg or "billing" in error_msg or "payment" in error_msg:
+            raise RuntimeError(
+                "Gemini API Error: This tool requires a PAID API key with billing enabled.\n"
+                "Free tier keys do not support image generation. Please:\n"
+                "1. Visit https://aistudio.google.com/api-keys\n"
+                "2. Enable billing on your Google Cloud project\n"
+                f"Original error: {e}"
+            )
+        elif "api key" in error_msg or "authentication" in error_msg or "unauthorized" in error_msg:
+            raise RuntimeError(
+                "Gemini API Error: Invalid API key.\n"
+                "Please check that your GEMINI_API_KEY environment variable is set correctly.\n"
+                f"Original error: {e}"
+            )
+        else:
+            raise RuntimeError(f"Gemini API Error: {e}")
 
     # Extract the image from the response
     generated_image = None
